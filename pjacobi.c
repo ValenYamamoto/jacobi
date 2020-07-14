@@ -132,7 +132,7 @@ void *thread_loop(void *threadnum) {
       delta_result = check_delta( a, b );
     }
     gettimeofday( &delta_stop, NULL );
-    elapsed_delta += (delta_stop.tv_sec - delta_start.tv_sec) + (delta_stop.tv_usec - delta_start.tv_usec) / 1000000.0;
+    elapsed_delta = (delta_stop.tv_sec - delta_start.tv_sec) + (delta_stop.tv_usec - delta_start.tv_usec) / 1000000.0;
 
     pthread_barrier_wait( &barrier[ BARRIER_DELTA ] );
 
