@@ -1,5 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
+#include <inttypes.h>
 #include <math.h>
 #include <sys/time.h>
 #include <assert.h>
@@ -10,6 +12,9 @@
 #define N 2000
 #define delta 0.05
 #define NUM_THREADS_INDEX 1
+
+#define DEBUG 0
+
 
 
 enum {
@@ -22,6 +27,10 @@ struct thread_info {
   int t;
   int start;
   int stop;
+  double thread_start_time;
+  double *calc_start_time;
+  double *calc_stop_time;
+  uint32_t grids;
 };
 
 int delta_result = 0;
@@ -36,8 +45,9 @@ static pthread_barrier_t barrier[ NUM_BARRIERS ];
 
 double a[N][N], b[N][N], correct[N][N];
 
-void jacobi( double p[N][N], double q[N][N], int start_j, int end_j ) {
+uint32_t jacobi( double p[N][N], double q[N][N], int start_j, int end_j ) {
 	int i, j;
+  uint32_t grids= 0;
   int end = ( end_j == N ) ? N - 1 : end_j;
   // middle 
 	for ( i = 1; i < N - 1; i++ ) {
@@ -47,6 +57,7 @@ void jacobi( double p[N][N], double q[N][N], int start_j, int end_j ) {
 				+ p[i][j-1] + p[i][j] + p[i][j+1]
 				+ p[i-1][j-1] + p[i-1][j] + p[i-1][j+1];
 			q[i][j] /= 9.0;
+      grids++;
 		}
 	}
   // vertical sides
@@ -56,12 +67,14 @@ void jacobi( double p[N][N], double q[N][N], int start_j, int end_j ) {
 			  + p[i][0] + p[i][1]	
 			  + p[i-1][0] + p[i-1][1];
 		  q[i][0] /= 6.0;
+      grids++;
     }
     if ( end_j == N ) {
 		  q[i][N-1] = p[i+1][N-2] + p[i+1][N-1] 
 			  + p[i][N-2] + p[i][N-1] 
 			  + p[i-1][N-2] + p[i-1][N-1];
 		  q[i][N-1] /=6.0;
+      grids++;
     }
 	}
   // horizonal sides
@@ -76,16 +89,20 @@ void jacobi( double p[N][N], double q[N][N], int start_j, int end_j ) {
 		q[N-1][j] = p[i-1][j-1] + p[i-1][j] + p[i-1][j+1]
 			+ p[i][j-1] + p[i][j] + p[i][j+1];
 		q[N-1][j] /= 6.0;
+    grids+=2;
 	}
   // two corners
   if (start_j == 0 ) {
 	  q[0][N-1] = p[0][N-1] + p[0][N-2] + p[1][N-2] + p[1][N-1];
 	  q[0][N-1] /= 4.0;
+    grids++;
   }
   if ( end_j == N ) {
 	  q[N-1][0] = p[N-1][0] + p[N-2][0] + p[N-2][1] + p[N-1][1];
 	  q[N-1][0] /= 4.0;
+    grids++;
   }
+  return grids;
 } 
 
 void *thread_loop(void *threadnum) {
@@ -95,9 +112,12 @@ void *thread_loop(void *threadnum) {
   int stop = args->stop;
 
   int count = 0;
-  struct timeval init_start, init_stop, delta_start, delta_stop, calc_start, calc_stop;
+  struct timeval init_start, init_stop, delta_start, delta_stop, calc_start, calc_stop, thread_start;
   double elapsed_delta= 0.0;
   double elapsed_calc = 0.0;
+  
+  //gettimeofday( &thread_start, NULL );
+  //args->thread_start_time = thread_start.tv_sec + thread_start.tv_usec / 1000000.0;
 
   if (t == 0) {
     gettimeofday( &init_start, NULL);
@@ -109,7 +129,6 @@ void *thread_loop(void *threadnum) {
   pthread_barrier_wait ( &barrier[BARRIER_INIT] );
 
   while(1) {
-    count++;
     gettimeofday( &calc_start, NULL );
     if (! (count%2) ) {
       jacobi( a, b, start, stop);
@@ -125,6 +144,11 @@ void *thread_loop(void *threadnum) {
 //      }
     }
     gettimeofday( &calc_stop, NULL );
+    if (DEBUG) {
+      args->calc_start_time[ count ] = ( calc_start.tv_sec - thread_start.tv_sec ) + ( calc_start.tv_usec - thread_start.tv_usec ) / 1000000.0;
+      args->calc_stop_time[ count ] = ( calc_stop.tv_sec - thread_start.tv_sec ) + ( calc_stop.tv_usec - thread_start.tv_usec ) / 1000000.0;
+    }
+    count++;
     elapsed_calc += (calc_stop.tv_sec - calc_start.tv_sec) + (calc_stop.tv_usec - calc_start.tv_usec) / 1000000.0;
 
     gettimeofday( &delta_start, NULL );
@@ -145,6 +169,7 @@ void *thread_loop(void *threadnum) {
   if( t == 0 ) {
     fprintf( stdout, "%lf %lf\n", elapsed_delta, elapsed_calc );
   }
+
   //fprintf( stdout, "I am thread %d and elapsed calc is %lf\n", t,  elapsed_calc);
   pthread_exit( NULL );
 
@@ -197,7 +222,7 @@ int main( int argc, char *argv[] )  {
   
   num_threads = atoi( argv[ NUM_THREADS_INDEX ] );
 
-  step = ceil( N / num_threads );
+  step = ceil( N / ( double ) num_threads );
 
   struct thread_info thread_args[ num_threads ];
   pthread_t threads[ num_threads ];
@@ -210,6 +235,9 @@ int main( int argc, char *argv[] )  {
     thread_args[ t ].t = t;
     thread_args[ t ].start = t * step;
     thread_args[ t ].stop = ( t != num_threads - 1 ) ? ( step * ( t + 1 ) ) : N;
+    //thread_args[ t ].thread_start_time = 0;
+    //thread_args[ t ].calc_start_time = ( double * ) malloc( sizeof( double ) * 200 );
+    //thread_args[ t ].calc_stop_time = ( double * ) malloc( sizeof( double ) * 200 );
     assert( ! pthread_create( &threads[ t ], NULL, thread_loop, (void*)&thread_args[t] ) );
   }
 
@@ -221,6 +249,25 @@ int main( int argc, char *argv[] )  {
     assert( ! pthread_barrier_destroy( &barrier[ t ] ) );
   }
 
+  if (DEBUG) {
+    int i;
+    printf("\n");
+    for ( t = 0; t < num_threads; t++ ) {
+      printf("%10.6f ", thread_args[ t ].thread_start_time);
+    }
+    printf("\n");
+    for ( i = 0; i < 200; i++ ) {
+      for ( t = 0; t < num_threads; t++ ) {
+        printf("%10.6lf ", thread_args[ t ].calc_start_time[ i ] );
+      }
+      printf("\n");
+      for ( t = 0; t < num_threads; t++ ) {
+        printf("%10.6lf ", thread_args[ t ].calc_stop_time[ i ] );
+      }
+      printf("\n\n\n");
+
+    }
+  }
   //readMatrixFromFile( "correct", correct );
   //checkAnswer( N, b, correct, 0);
   pthread_exit(NULL);
