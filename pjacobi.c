@@ -145,6 +145,7 @@ void *thread_loop(void *threadnum) {
   if( t == 0 ) {
     fprintf( stdout, "%lf %lf\n", elapsed_delta, elapsed_calc );
   }
+  //fprintf( stdout, "I am thread %d and elapsed calc is %lf\n", t,  elapsed_calc);
   pthread_exit( NULL );
 
 }  
@@ -220,8 +221,8 @@ int main( int argc, char *argv[] )  {
     assert( ! pthread_barrier_destroy( &barrier[ t ] ) );
   }
 
-  readMatrixFromFile( "correct", correct );
-  checkAnswer( N, b, correct, 0);
+  //readMatrixFromFile( "correct", correct );
+  //checkAnswer( N, b, correct, 0);
   pthread_exit(NULL);
 
 }

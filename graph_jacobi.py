@@ -12,7 +12,7 @@ def process_stream( stream: "iterable" ) -> int:
 if __name__ == "__main__":
   times = defaultdict( list )
 
-  for i in range( 1, 33 ): # number of cores
+  for i in range( 1, 100 ): # number of cores
     for _ in range(3):
       stream = os.popen( f'./a.out {i}' )
       init_time, delta_time, calc_time = process_stream( stream )
@@ -21,4 +21,4 @@ if __name__ == "__main__":
 
   for threads, exectimes in times.items():
     plt.scatter( [threads] * 3, exectimes )
-  plt.savefig( "graph.png" )
+  plt.savefig( "graph100.png" )
