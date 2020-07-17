@@ -45,9 +45,8 @@ static pthread_barrier_t barrier[ NUM_BARRIERS ];
 
 double a[N][N], b[N][N], correct[N][N];
 
-uint32_t jacobi( double p[N][N], double q[N][N], int start_j, int end_j ) {
+void jacobi( double p[N][N], double q[N][N], int start_j, int end_j ) {
 	int i, j;
-  uint32_t grids= 0;
   int end = ( end_j == N ) ? N - 1 : end_j;
   // middle 
 	for ( i = 1; i < N - 1; i++ ) {
@@ -57,7 +56,6 @@ uint32_t jacobi( double p[N][N], double q[N][N], int start_j, int end_j ) {
 				+ p[i][j-1] + p[i][j] + p[i][j+1]
 				+ p[i-1][j-1] + p[i-1][j] + p[i-1][j+1];
 			q[i][j] /= 9.0;
-      grids++;
 		}
 	}
   // vertical sides
@@ -67,14 +65,12 @@ uint32_t jacobi( double p[N][N], double q[N][N], int start_j, int end_j ) {
 			  + p[i][0] + p[i][1]	
 			  + p[i-1][0] + p[i-1][1];
 		  q[i][0] /= 6.0;
-      grids++;
     }
     if ( end_j == N ) {
 		  q[i][N-1] = p[i+1][N-2] + p[i+1][N-1] 
 			  + p[i][N-2] + p[i][N-1] 
 			  + p[i-1][N-2] + p[i-1][N-1];
 		  q[i][N-1] /=6.0;
-      grids++;
     }
 	}
   // horizonal sides
@@ -89,20 +85,16 @@ uint32_t jacobi( double p[N][N], double q[N][N], int start_j, int end_j ) {
 		q[N-1][j] = p[i-1][j-1] + p[i-1][j] + p[i-1][j+1]
 			+ p[i][j-1] + p[i][j] + p[i][j+1];
 		q[N-1][j] /= 6.0;
-    grids+=2;
 	}
   // two corners
   if (start_j == 0 ) {
 	  q[0][N-1] = p[0][N-1] + p[0][N-2] + p[1][N-2] + p[1][N-1];
 	  q[0][N-1] /= 4.0;
-    grids++;
   }
   if ( end_j == N ) {
 	  q[N-1][0] = p[N-1][0] + p[N-2][0] + p[N-2][1] + p[N-1][1];
 	  q[N-1][0] /= 4.0;
-    grids++;
   }
-  return grids;
 } 
 
 void *thread_loop(void *threadnum) {
@@ -156,7 +148,7 @@ void *thread_loop(void *threadnum) {
       delta_result = check_delta( a, b );
     }
     gettimeofday( &delta_stop, NULL );
-    elapsed_delta = (delta_stop.tv_sec - delta_start.tv_sec) + (delta_stop.tv_usec - delta_start.tv_usec) / 1000000.0;
+    elapsed_delta += (delta_stop.tv_sec - delta_start.tv_sec) + (delta_stop.tv_usec - delta_start.tv_usec) / 1000000.0;
 
     pthread_barrier_wait( &barrier[ BARRIER_DELTA ] );
 
@@ -167,7 +159,7 @@ void *thread_loop(void *threadnum) {
   }
 
   if( t == 0 ) {
-    fprintf( stdout, "%lf %lf\n", elapsed_delta, elapsed_calc );
+    fprintf( stdout, "%lf %lf ", elapsed_delta, elapsed_calc );
   }
 
   //fprintf( stdout, "I am thread %d and elapsed calc is %lf\n", t,  elapsed_calc);
