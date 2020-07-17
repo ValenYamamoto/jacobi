@@ -16,8 +16,8 @@ if __name__ == "__main__":
     for num, line in enumerate( f, 1 ):
       print(line);
       init_time, delta_time, calc_time, real_time, user_time = process_line( line )
-      times[ ceil( num / 3 ) ] += [ real_time ]
+      times[ ceil( num / 3 ) ] += [user_time ]
 
   for threads, exectimes in times.items():
     plt.scatter( [threads] * 3, exectimes )
-  plt.savefig( "graph_real.png" )
+  plt.savefig( "graph_user.png" )
