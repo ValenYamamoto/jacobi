@@ -1,19 +1,26 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <sys/stat.h>
 #include <inttypes.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/ioctl.h>
 #include <math.h>
 #include <sys/time.h>
 #include <assert.h>
 #include <pthread.h>
 
 #include "matrixUtil.h"
+#include "/home/valen/msr-safe/msr_safe.h"
 
 #define N 2000
 #define delta 0.05
 #define NUM_THREADS_INDEX 1
 
 #define DEBUG 0
+#define PRINT_MSRS 1
 
 
 
@@ -23,6 +30,7 @@ enum {
   NUM_BARRIERS = 2
 };
 
+// struct to pass into threads
 struct thread_info {
   int t;
   int start;
@@ -59,20 +67,22 @@ void jacobi( double p[N][N], double q[N][N], int start_j, int end_j ) {
 		}
 	}
   // vertical sides
-	for ( i = 1; i < N-1; i ++) {
-    if ( start_j == 0 ){
-		  q[i][0] = p[i+1][0] + p[i+1][1]
-			  + p[i][0] + p[i][1]	
-			  + p[i-1][0] + p[i-1][1];
-		  q[i][0] /= 6.0;
-    }
-    if ( end_j == N ) {
-		  q[i][N-1] = p[i+1][N-2] + p[i+1][N-1] 
-			  + p[i][N-2] + p[i][N-1] 
-			  + p[i-1][N-2] + p[i-1][N-1];
-		  q[i][N-1] /=6.0;
-    }
-	}
+  if ( start_j == 0 || end_j == N ) {
+	  for ( i = 1; i < N-1; i ++) {
+      if ( start_j == 0 ){
+		    q[i][0] = p[i+1][0] + p[i+1][1]
+			    + p[i][0] + p[i][1]	
+			    + p[i-1][0] + p[i-1][1];
+		    q[i][0] /= 6.0;
+      }
+      if ( end_j == N ) {
+		    q[i][N-1] = p[i+1][N-2] + p[i+1][N-1] 
+			    + p[i][N-2] + p[i][N-1] 
+			    + p[i-1][N-2] + p[i-1][N-1];
+		    q[i][N-1] /=6.0;
+      }
+	  }
+  }
   // horizonal sides
   j = (start_j == 0) ? 1: start_j;
 	for ( ; j < end; j++) {
@@ -168,8 +178,43 @@ void *thread_loop(void *threadnum) {
 }  
 
 	
-	
+void read_msrs( int threads, struct msr_batch_array *batch) {
+  int i, rc;
+  int fd = open( "/dev/cpu/msr_batch", O_RDWR );
+  assert( fd != -1 );
+
+  for (i = 0; i < threads * 2; i+=2 ) {
+    // mperf
+    batch->ops[i].cpu = i/2;
+    batch->ops[i].isrdmsr = 1;
+    batch->ops[i].err = 0;
+    batch->ops[i].msr = 0xE7;
+    batch->ops[i].msrdata = 0;
+    batch->ops[i].wmask = 0;
+
+    // aperf
+    batch->ops[i+1].cpu = i/2;
+    batch->ops[i+1].isrdmsr = 1;
+    batch->ops[i+1].err = 0;
+    batch->ops[i+1].msr = 0xE8;
+    batch->ops[i+1].msrdata = 0;
+    batch->ops[i+1].wmask = 0;
+  }
+
+
+  rc = ioctl( fd, X86_IOC_MSR_BATCH, batch );
+  assert( rc != -1 );
+  close( fd );
+
+}  
 		
+void print_msrs( int threads, struct msr_batch_op start_op[], struct msr_batch_op stop_op[] ) {
+  int i;
+  for (i = 0; i < threads * 2; i+=2) {
+    printf( "%2d mperf: %" PRIu64 "  %" PRIu64"\n", i/2, (uint64_t)start_op[i].msrdata, (uint64_t)stop_op[i].msrdata );
+    printf( "   aperf: %" PRIu64 "  %" PRIu64"\n", (uint64_t)start_op[i+1].msrdata, (uint64_t)stop_op[i+1].msrdata );
+  }
+}
 
 void initializeGrid( double p[N][N] ) {
 	int i, j;
@@ -214,6 +259,14 @@ int main( int argc, char *argv[] )  {
   
   num_threads = atoi( argv[ NUM_THREADS_INDEX ] );
 
+  struct msr_batch_array batch;
+  struct msr_batch_op start_op[ num_threads * 2 ], stop_op[ num_threads * 2];
+
+  batch.numops = num_threads * 2;
+  batch.ops = start_op;
+
+  read_msrs( num_threads, &batch );
+
   step = ceil( N / ( double ) num_threads );
 
   struct thread_info thread_args[ num_threads ];
@@ -241,6 +294,9 @@ int main( int argc, char *argv[] )  {
     assert( ! pthread_barrier_destroy( &barrier[ t ] ) );
   }
 
+  batch.ops = stop_op;
+  read_msrs( num_threads, &batch );
+
   if (DEBUG) {
     int i;
     printf("\n");
@@ -259,6 +315,10 @@ int main( int argc, char *argv[] )  {
       printf("\n\n\n");
 
     }
+  }
+  if (PRINT_MSRS) {
+    printf("\n");
+    print_msrs( num_threads, start_op, stop_op );
   }
   //readMatrixFromFile( "correct", correct );
   //checkAnswer( N, b, correct, 0);
