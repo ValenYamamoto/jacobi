@@ -21,6 +21,7 @@
 
 #define DEBUG 0
 #define PRINT_MSRS 1
+#define PRINT_FREQ 1
 
 
 
@@ -39,6 +40,11 @@ struct thread_info {
   double *calc_start_time;
   double *calc_stop_time;
   uint32_t grids;
+};
+
+struct thread_msr_freq {
+  double aperf_freq;
+  double mperf_freq;
 };
 
 int delta_result = 0;
@@ -178,7 +184,7 @@ void *thread_loop(void *threadnum) {
 }  
 
 	
-void read_msrs( int threads, struct msr_batch_array *batch) {
+void read_msrs( int threads, struct msr_batch_array *batch, struct timeval *read_time) {
   int i, rc;
   int fd = open( "/dev/cpu/msr_batch", O_RDWR );
   assert( fd != -1 );
@@ -202,6 +208,7 @@ void read_msrs( int threads, struct msr_batch_array *batch) {
   }
 
 
+  gettimeofday( read_time, NULL );
   rc = ioctl( fd, X86_IOC_MSR_BATCH, batch );
   assert( rc != -1 );
   close( fd );
@@ -213,6 +220,21 @@ void print_msrs( int threads, struct msr_batch_op start_op[], struct msr_batch_o
   for (i = 0; i < threads * 2; i+=2) {
     printf( "%2d mperf: %" PRIu64 "  %" PRIu64"\n", i/2, (uint64_t)start_op[i].msrdata, (uint64_t)stop_op[i].msrdata );
     printf( "   aperf: %" PRIu64 "  %" PRIu64"\n", (uint64_t)start_op[i+1].msrdata, (uint64_t)stop_op[i+1].msrdata );
+  }
+}
+
+void calc_msr_freq( int threads, double time, struct msr_batch_op start_op[], struct msr_batch_op stop_op[], struct thread_msr_freq answer[] ) {
+  int i;
+  for ( i = 0; i < threads * 2; i+=2 ) {
+    answer[i/2].mperf_freq = ( (uint64_t) stop_op[i].msrdata - (uint64_t) start_op[i].msrdata ) / time;
+    answer[i/2].aperf_freq = ( (uint64_t) stop_op[i+1].msrdata - (uint64_t) start_op[i+1].msrdata ) / time;
+  }
+}
+
+void print_thread_freq( int threads, struct thread_msr_freq freq[] ) {
+  int i;
+  for ( i = 0; i < threads; i++ ) {
+    printf( "thread %d   mperf freq: %lf  aperf freq: %lf\n", i, freq[i].mperf_freq, freq[i].aperf_freq );
   }
 }
 
@@ -256,16 +278,20 @@ int check_delta( double new[N][N], double old[N][N] ) {
 
 int main( int argc, char *argv[] )  {
   int num_threads, t, step;
+
+  double elapsed_time;
   
   num_threads = atoi( argv[ NUM_THREADS_INDEX ] );
 
   struct msr_batch_array batch;
   struct msr_batch_op start_op[ num_threads * 2 ], stop_op[ num_threads * 2];
+  struct thread_msr_freq freq[ num_threads ];
 
+  struct timeval msr_read_start, msr_read_stop;
   batch.numops = num_threads * 2;
   batch.ops = start_op;
 
-  read_msrs( num_threads, &batch );
+  read_msrs( num_threads, &batch, &msr_read_start );
 
   step = ceil( N / ( double ) num_threads );
 
@@ -295,7 +321,15 @@ int main( int argc, char *argv[] )  {
   }
 
   batch.ops = stop_op;
-  read_msrs( num_threads, &batch );
+  read_msrs( num_threads, &batch, &msr_read_stop );
+
+  elapsed_time = ( msr_read_start.tv_sec - msr_read_stop.tv_sec ) + ( msr_read_start.tv_usec - msr_read_stop.tv_usec) / 1000000.0;
+
+  calc_msr_freq( num_threads, elapsed_time, start_op, stop_op, freq );
+
+  if ( PRINT_FREQ ) {
+    print_thread_freq( num_threads, freq );
+  }
 
   if (DEBUG) {
     int i;
@@ -315,7 +349,9 @@ int main( int argc, char *argv[] )  {
       printf("\n\n\n");
 
     }
+
   }
+
   if (PRINT_MSRS) {
     printf("\n");
     print_msrs( num_threads, start_op, stop_op );
