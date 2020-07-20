@@ -225,11 +225,11 @@ void read_msrs( int threads, struct msr_batch_array *batch, struct timeval *read
 
 }  
 		
-void print_msrs( int threads, struct msr_batch_op start_op[], struct msr_batch_op stop_op[] ) {
+void print_msrs( int threads, struct msr_batch_op start_op[], struct msr_batch_op stop_op[], double time ) {
   int i;
   for (i = 0; i < threads * 2; i+=2) {
-    printf( "%2d mperf: %" PRIu64 "  %" PRIu64" delta: %" PRIu64"\n", i/2, (uint64_t)start_op[i].msrdata, (uint64_t)stop_op[i].msrdata, (uint64_t)stop_op[i].msrdata - (uint64_t)start_op[i].msrdata );
-    printf( "   aperf: %" PRIu64 "  %" PRIu64"  delta %" PRIu64"\n", (uint64_t)start_op[i+1].msrdata, (uint64_t)stop_op[i+1].msrdata, (uint64_t)stop_op[i+1].msrdata - (uint64_t)start_op[i+1].msrdata );
+    printf( "%2d mperf: %" PRIu64 "  %" PRIu64"  delta %" PRIu64" delta time: %.6lf\n", i/2, (uint64_t)start_op[i].msrdata, (uint64_t)stop_op[i].msrdata, (uint64_t)stop_op[i].msrdata - (uint64_t)start_op[i].msrdata, time );
+    printf( "   aperf: %" PRIu64 "  %" PRIu64"  delta %" PRIu64"  delta time: %.6lf\n", (uint64_t)start_op[i+1].msrdata, (uint64_t)stop_op[i+1].msrdata, (uint64_t)stop_op[i+1].msrdata - (uint64_t)start_op[i+1].msrdata, time );
   }
 }
 
@@ -384,7 +384,7 @@ int main( int argc, char *argv[] )  {
 
   if (PRINT_MSRS) {
     printf("\n");
-    print_msrs( num_threads, start_op, stop_op );
+    print_msrs( num_threads, start_op, stop_op, elapsed_time );
     printf( "Elapsed time: %.4lf\n", elapsed_time );
     printf( "Begin time: %.4lf\n", begin_time );
     printf( "End time: %.4lf\n", end_time );
