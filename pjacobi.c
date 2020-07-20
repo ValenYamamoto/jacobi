@@ -40,6 +40,9 @@ struct thread_info {
   double *calc_start_time;
   double *calc_stop_time;
   uint32_t grids;
+  struct msr_batch_array *batch;
+  struct timeval *msr_read_time;
+  int num_threads;
 };
 
 // struct to hold clock frequency data
@@ -55,6 +58,8 @@ int check_delta( double new[N][N], double old[N][N] );
 void printGrid( double p[N][N] ); 
 
 void initializeGrid( double p[N][N] );
+
+void read_msrs( int threads, struct msr_batch_array *batch, struct timeval *read_time); 
 
 static pthread_barrier_t barrier[ NUM_BARRIERS ];
 
@@ -139,6 +144,10 @@ void *thread_loop(void *threadnum) {
   }
   pthread_barrier_wait ( &barrier[BARRIER_INIT] );
 
+  if (t == 0) {
+    read_msrs( args->num_threads, args->batch, args->msr_read_time );
+  }
+
   while(1) {
     gettimeofday( &calc_start, NULL );
     if (! (count%2) ) {
@@ -221,23 +230,33 @@ void read_msrs( int threads, struct msr_batch_array *batch, struct timeval *read
 void print_msrs( int threads, struct msr_batch_op start_op[], struct msr_batch_op stop_op[] ) {
   int i;
   for (i = 0; i < threads * 2; i+=2) {
-    printf( "%2d mperf: %" PRIu64 "  %" PRIu64"\n", i/2, (uint64_t)start_op[i].msrdata, (uint64_t)stop_op[i].msrdata );
-    printf( "   aperf: %" PRIu64 "  %" PRIu64"\n", (uint64_t)start_op[i+1].msrdata, (uint64_t)stop_op[i+1].msrdata );
+    printf( "%2d mperf: %" PRIu64 "  %" PRIu64" delta: %" PRIu64"\n", i/2, (uint64_t)start_op[i].msrdata, (uint64_t)stop_op[i].msrdata, (uint64_t)stop_op[i].msrdata - (uint64_t)start_op[i].msrdata );
+    printf( "   aperf: %" PRIu64 "  %" PRIu64"  delta %" PRIu64"\n", (uint64_t)start_op[i+1].msrdata, (uint64_t)stop_op[i+1].msrdata, (uint64_t)stop_op[i+1].msrdata - (uint64_t)start_op[i+1].msrdata );
   }
 }
 
 void calc_msr_freq( int threads, double time, struct msr_batch_op start_op[], struct msr_batch_op stop_op[], struct thread_msr_freq answer[] ) {
   int i;
   for ( i = 0; i < threads * 2; i+=2 ) {
-    answer[i/2].mperf_freq = ( (uint64_t) stop_op[i].msrdata - (uint64_t) start_op[i].msrdata ) / time;
-    answer[i/2].aperf_freq = ( (uint64_t) stop_op[i+1].msrdata - (uint64_t) start_op[i+1].msrdata ) / time;
+    answer[i/2].mperf_freq = ( (uint64_t) stop_op[i].msrdata - (uint64_t) start_op[i].msrdata ) / time / 1E9;
+    answer[i/2].aperf_freq = ( (uint64_t) stop_op[i+1].msrdata - (uint64_t) start_op[i+1].msrdata ) / time / 1E9;
   }
 }
 
-void print_thread_freq( int threads, struct thread_msr_freq freq[] ) {
+//void print_thread_freq( int threads, struct thread_msr_freq freq[] ) {
+//  int i;
+//  for ( i = 0; i < threads; i++ ) {
+//    printf( "thread %d   mperf freq: %.4lf  aperf freq: %.4lf\n", i, freq[i].mperf_freq, freq[i].aperf_freq );
+//  }
+//}
+
+
+void print_thread_freq( int threads, struct thread_msr_freq total[], struct thread_msr_freq begin[], struct thread_msr_freq end[] ) {
   int i;
   for ( i = 0; i < threads; i++ ) {
-    printf( "thread %d   mperf freq: %lf  aperf freq: %lf\n", i, freq[i].mperf_freq, freq[i].aperf_freq );
+    printf( "thread %2d  %5s   mperf freq: %.4lf  aperf freq: %.4lf\n", i, "total", total[i].mperf_freq, total[i].aperf_freq );
+    printf( "           %5s   mperf freq: %.4lf  aperf freq: %.4lf\n", "begin", begin[i].mperf_freq, begin[i].aperf_freq );
+    printf( "           %5s   mperf freq: %.4lf  aperf freq: %.4lf\n", "end", end[i].mperf_freq, end[i].aperf_freq );
   }
 }
 
@@ -282,15 +301,15 @@ int check_delta( double new[N][N], double old[N][N] ) {
 int main( int argc, char *argv[] )  {
   int num_threads, t, step;
 
-  double elapsed_time;
+  double elapsed_time, begin_time, end_time;
   
   num_threads = atoi( argv[ NUM_THREADS_INDEX ] );
 
   struct msr_batch_array batch;
-  struct msr_batch_op start_op[ num_threads * 2 ], stop_op[ num_threads * 2];
-  struct thread_msr_freq freq[ num_threads ];
+  struct msr_batch_op start_op[ num_threads * 2 ], after_init_op[ num_threads * 2], stop_op[ num_threads * 2];
+  struct thread_msr_freq freq_total[ num_threads ], freq_begin[ num_threads ], freq_end[ num_threads ];
 
-  struct timeval msr_read_start, msr_read_stop;
+  struct timeval msr_read_start, after_init_time, msr_read_stop;
   batch.numops = num_threads * 2;
   batch.ops = start_op;
 
@@ -305,6 +324,7 @@ int main( int argc, char *argv[] )  {
     assert( ! pthread_barrier_init( &barrier[t], NULL, num_threads ) );
   }
 
+  batch.ops = after_init_op;
   for( t = 0; t < num_threads; t++ ) {
     thread_args[ t ].t = t;
     thread_args[ t ].start = t * step;
@@ -312,6 +332,9 @@ int main( int argc, char *argv[] )  {
     //thread_args[ t ].thread_start_time = 0;
     //thread_args[ t ].calc_start_time = ( double * ) malloc( sizeof( double ) * 200 );
     //thread_args[ t ].calc_stop_time = ( double * ) malloc( sizeof( double ) * 200 );
+    thread_args[ t ].batch = &batch;
+    thread_args[ t ].msr_read_time = &after_init_time;
+    thread_args[ t ].num_threads = num_threads;
     assert( ! pthread_create( &threads[ t ], NULL, thread_loop, (void*)&thread_args[t] ) );
   }
 
@@ -327,11 +350,17 @@ int main( int argc, char *argv[] )  {
   read_msrs( num_threads, &batch, &msr_read_stop );
 
   elapsed_time = ( msr_read_stop.tv_sec - msr_read_start.tv_sec ) + ( msr_read_stop.tv_usec - msr_read_start.tv_usec) / 1000000.0;
+  begin_time = ( after_init_time.tv_sec - msr_read_start.tv_sec ) + ( after_init_time.tv_usec - msr_read_start.tv_usec) / 1000000.0;
+  end_time = ( msr_read_stop.tv_sec - after_init_time.tv_sec ) + ( msr_read_stop.tv_usec - after_init_time.tv_usec) / 1000000.0;
 
-  calc_msr_freq( num_threads, elapsed_time, start_op, stop_op, freq );
+  calc_msr_freq( num_threads, elapsed_time, start_op, stop_op, freq_total );
+  calc_msr_freq( num_threads, begin_time, start_op, after_init_op, freq_begin );
+  calc_msr_freq( num_threads, end_time, after_init_op, stop_op, freq_end );
 
   if ( PRINT_FREQ ) {
-    print_thread_freq( num_threads, freq );
+    printf( "\n" );
+    //print_thread_freq( num_threads, freq );
+    print_thread_freq( num_threads, freq_total, freq_begin, freq_end );
   }
 
   if (DEBUG) {
@@ -358,6 +387,9 @@ int main( int argc, char *argv[] )  {
   if (PRINT_MSRS) {
     printf("\n");
     print_msrs( num_threads, start_op, stop_op );
+    printf( "Elapsed time: %.4lf\n", elapsed_time );
+    printf( "Begin time: %.4lf\n", begin_time );
+    printf( "End time: %.4lf\n", end_time );
   }
   //readMatrixFromFile( "correct", correct );
   //checkAnswer( N, b, correct, 0);
