@@ -141,12 +141,10 @@ void *thread_loop(void *threadnum) {
 	  initializeGrid( b );
     gettimeofday( &init_stop, NULL);
     fprintf(stdout, "%lf ", (init_stop.tv_sec - init_start.tv_sec) + (init_stop.tv_usec - init_start.tv_usec) / 1000000.0);
+    read_msrs( args->num_threads, args->batch, args->msr_read_time );
   }
   pthread_barrier_wait ( &barrier[BARRIER_INIT] );
 
-  if (t == 0) {
-    read_msrs( args->num_threads, args->batch, args->msr_read_time );
-  }
 
   while(1) {
     gettimeofday( &calc_start, NULL );
