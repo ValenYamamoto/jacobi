@@ -42,6 +42,7 @@ struct thread_info {
   uint32_t grids;
 };
 
+// struct to hold clock frequency data
 struct thread_msr_freq {
   double aperf_freq;
   double mperf_freq;
@@ -59,6 +60,7 @@ static pthread_barrier_t barrier[ NUM_BARRIERS ];
 
 double a[N][N], b[N][N], correct[N][N];
 
+// ************************** JACOBI ***************************
 void jacobi( double p[N][N], double q[N][N], int start_j, int end_j ) {
 	int i, j;
   int end = ( end_j == N ) ? N - 1 : end_j;
@@ -113,6 +115,7 @@ void jacobi( double p[N][N], double q[N][N], int start_j, int end_j ) {
   }
 } 
 
+// *************************** THREAD LOOP ***********************
 void *thread_loop(void *threadnum) {
   struct thread_info *args  = ( struct thread_info *) (threadnum);
   int t = args->t;
@@ -183,7 +186,7 @@ void *thread_loop(void *threadnum) {
 
 }  
 
-	
+// *************************** MSR CODE ***************************	
 void read_msrs( int threads, struct msr_batch_array *batch, struct timeval *read_time) {
   int i, rc;
   int fd = open( "/dev/cpu/msr_batch", O_RDWR );
@@ -323,7 +326,7 @@ int main( int argc, char *argv[] )  {
   batch.ops = stop_op;
   read_msrs( num_threads, &batch, &msr_read_stop );
 
-  elapsed_time = ( msr_read_start.tv_sec - msr_read_stop.tv_sec ) + ( msr_read_start.tv_usec - msr_read_stop.tv_usec) / 1000000.0;
+  elapsed_time = ( msr_read_stop.tv_sec - msr_read_start.tv_sec ) + ( msr_read_stop.tv_usec - msr_read_start.tv_usec) / 1000000.0;
 
   calc_msr_freq( num_threads, elapsed_time, start_op, stop_op, freq );
 
