@@ -22,7 +22,8 @@
 
 #define DEBUG 0
 #define PRINT_MSRS 0
-#define PRINT_FREQ 1
+#define PRINT_FREQ 0
+#define PRINT_FREQ_TIME 1
 
 
 
@@ -239,7 +240,6 @@ void write_msrs( int threads, int fd, struct msr_batch_array *batch ) {
     batch->ops[i].wmask = 0; // and this
   }
 
-
   //gettimeofday( read_time, NULL );
   rc = ioctl( fd, X86_IOC_MSR_BATCH, batch );
   assert( rc != -1 );
@@ -250,6 +250,13 @@ void print_msrs( int threads, struct msr_batch_op start_op[], struct msr_batch_o
   for (i = 0; i < threads * 2; i+=2) {
     printf( "%2d mperf: %" PRIu64 "  %" PRIu64"  delta %" PRIu64"\n", i/2, (uint64_t)start_op[i].msrdata, (uint64_t)stop_op[i].msrdata, (uint64_t)stop_op[i].msrdata - (uint64_t)start_op[i].msrdata );
     printf( "   aperf: %" PRIu64 "  %" PRIu64"  delta %" PRIu64"\n", (uint64_t)start_op[i+1].msrdata, (uint64_t)stop_op[i+1].msrdata, (uint64_t)stop_op[i+1].msrdata - (uint64_t)start_op[i+1].msrdata );
+  }
+}
+
+void print_freq_time( int threads, struct thread_msr_freq freq[] ) {
+  int i;
+  for( i = 0; i < threads; i++ ) {
+    printf( "thread %2d   freq: %5.4lf   time: %7.6lf\n", i, freq[i].calc_freq, freq[i].mperf_time );
   }
 }
 
@@ -391,14 +398,18 @@ int main( int argc, char *argv[] )  {
   //calc_msr_freq( num_threads, begin_time, start_op, after_init_op, freq_begin );
   //calc_msr_freq( num_threads, end_time, after_init_op, stop_op, freq_end );
   calc_msr_freq( num_threads, start_op, stop_op, freq_total );
+  calc_times( num_threads, freq_total );
 
   if ( PRINT_FREQ ) {
     printf( "\n" );
     //print_thread_freq( num_threads, freq );
     print_thread_freq( num_threads, freq_total );
     printf( "\n" );
-    calc_times( num_threads, freq_total );
     print_thread_times( num_threads, freq_total );
+  }
+
+  if ( PRINT_FREQ_TIME ) {
+    print_freq_time( num_threads, freq_total );
   }
 
   if (DEBUG) {
