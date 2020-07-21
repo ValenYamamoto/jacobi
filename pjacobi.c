@@ -18,9 +18,10 @@
 #define N 2000
 #define delta 0.05
 #define NUM_THREADS_INDEX 1
+#define PRINTED_FREQ 2.6 // in GHz
 
 #define DEBUG 0
-#define PRINT_MSRS 1
+#define PRINT_MSRS 0
 #define PRINT_FREQ 1
 
 
@@ -47,8 +48,11 @@ struct thread_info {
 
 // struct to hold clock frequency data
 struct thread_msr_freq {
-  double aperf_freq;
-  double mperf_freq;
+  double aperf_delta;
+  double mperf_delta;
+  double calc_freq;
+  double mperf_time;
+  double aperf_time;
 };
 
 int delta_result = 0;
@@ -59,7 +63,7 @@ void printGrid( double p[N][N] );
 
 void initializeGrid( double p[N][N] );
 
-void read_msrs( int threads, struct msr_batch_array *batch, struct timeval *read_time); 
+void read_msrs( int threads, int fd, struct msr_batch_array *batch ); 
 
 static pthread_barrier_t barrier[ NUM_BARRIERS ];
 
@@ -139,15 +143,15 @@ void *thread_loop(void *threadnum) {
     gettimeofday( &init_start, NULL);
 	  initializeGrid( a );
 	  initializeGrid( b );
-    gettimeofday( &init_stop, NULL);
-    fprintf(stdout, "%lf ", (init_stop.tv_sec - init_start.tv_sec) + (init_stop.tv_usec - init_start.tv_usec) / 1000000.0);
-    read_msrs( args->num_threads, args->batch, args->msr_read_time );
+    //gettimeofday( &init_stop, NULL);
+    //fprintf(stdout, "%lf ", (init_stop.tv_sec - init_start.tv_sec) + (init_stop.tv_usec - init_start.tv_usec) / 1000000.0);
+    //read_msrs( args->num_threads, args->batch, args->msr_read_time );
   }
   pthread_barrier_wait ( &barrier[BARRIER_INIT] );
 
 
   while(1) {
-    gettimeofday( &calc_start, NULL );
+    //gettimeofday( &calc_start, NULL );
     if (! (count%2) ) {
       jacobi( a, b, start, stop);
 //      if ( t == 0) {
@@ -161,7 +165,7 @@ void *thread_loop(void *threadnum) {
 //        printGrid(a);
 //      }
     }
-    gettimeofday( &calc_stop, NULL );
+    //gettimeofday( &calc_stop, NULL );
     if (DEBUG) {
       args->calc_start_time[ count ] = ( calc_start.tv_sec - thread_start.tv_sec ) + ( calc_start.tv_usec - thread_start.tv_usec ) / 1000000.0;
       args->calc_stop_time[ count ] = ( calc_stop.tv_sec - thread_start.tv_sec ) + ( calc_stop.tv_usec - thread_start.tv_usec ) / 1000000.0;
@@ -169,11 +173,11 @@ void *thread_loop(void *threadnum) {
     count++;
     elapsed_calc += (calc_stop.tv_sec - calc_start.tv_sec) + (calc_stop.tv_usec - calc_start.tv_usec) / 1000000.0;
 
-    gettimeofday( &delta_start, NULL );
+    //gettimeofday( &delta_start, NULL );
     if( t == 0) {
       delta_result = check_delta( a, b );
     }
-    gettimeofday( &delta_stop, NULL );
+    //gettimeofday( &delta_stop, NULL );
     elapsed_delta += (delta_stop.tv_sec - delta_start.tv_sec) + (delta_stop.tv_usec - delta_start.tv_usec) / 1000000.0;
 
     pthread_barrier_wait( &barrier[ BARRIER_DELTA ] );
@@ -185,7 +189,8 @@ void *thread_loop(void *threadnum) {
   }
 
   if( t == 0 ) {
-    fprintf( stdout, "%lf %lf ", elapsed_delta, elapsed_calc );
+    ;
+    //fprintf( stdout, "%lf %lf ", elapsed_delta, elapsed_calc );
   }
 
   //fprintf( stdout, "I am thread %d and elapsed calc is %lf\n", t,  elapsed_calc);
@@ -194,10 +199,8 @@ void *thread_loop(void *threadnum) {
 }  
 
 // *************************** MSR CODE ***************************	
-void read_msrs( int threads, struct msr_batch_array *batch, struct timeval *read_time) {
+void read_msrs( int threads, int fd, struct msr_batch_array *batch ) {
   int i, rc;
-  int fd = open( "/dev/cpu/msr_batch", O_RDWR );
-  assert( fd != -1 );
 
   for (i = 0; i < threads * 2; i+=2 ) {
     // mperf
@@ -218,26 +221,44 @@ void read_msrs( int threads, struct msr_batch_array *batch, struct timeval *read
   }
 
 
-  gettimeofday( read_time, NULL );
+  //gettimeofday( read_time, NULL );
   rc = ioctl( fd, X86_IOC_MSR_BATCH, batch );
   assert( rc != -1 );
-  close( fd );
-
 }  
 		
-void print_msrs( int threads, struct msr_batch_op start_op[], struct msr_batch_op stop_op[], double time ) {
+void write_msrs( int threads, int fd, struct msr_batch_array *batch ) {
+  int i, rc;
+
+  for (i = 0; i < threads; i++ ) {
+    // perf_ctl
+    batch->ops[i].cpu = i/2;
+    batch->ops[i].isrdmsr = 1;
+    batch->ops[i].err = 0;
+    batch->ops[i].msr = 0x199;
+    batch->ops[i].msrdata = 0; // change this
+    batch->ops[i].wmask = 0; // and this
+  }
+
+
+  //gettimeofday( read_time, NULL );
+  rc = ioctl( fd, X86_IOC_MSR_BATCH, batch );
+  assert( rc != -1 );
+}  
+
+void print_msrs( int threads, struct msr_batch_op start_op[], struct msr_batch_op stop_op[] ) {
   int i;
   for (i = 0; i < threads * 2; i+=2) {
-    printf( "%2d mperf: %" PRIu64 "  %" PRIu64"  delta %" PRIu64" delta time: %.6lf\n", i/2, (uint64_t)start_op[i].msrdata, (uint64_t)stop_op[i].msrdata, (uint64_t)stop_op[i].msrdata - (uint64_t)start_op[i].msrdata, time );
-    printf( "   aperf: %" PRIu64 "  %" PRIu64"  delta %" PRIu64"  delta time: %.6lf\n", (uint64_t)start_op[i+1].msrdata, (uint64_t)stop_op[i+1].msrdata, (uint64_t)stop_op[i+1].msrdata - (uint64_t)start_op[i+1].msrdata, time );
+    printf( "%2d mperf: %" PRIu64 "  %" PRIu64"  delta %" PRIu64"\n", i/2, (uint64_t)start_op[i].msrdata, (uint64_t)stop_op[i].msrdata, (uint64_t)stop_op[i].msrdata - (uint64_t)start_op[i].msrdata );
+    printf( "   aperf: %" PRIu64 "  %" PRIu64"  delta %" PRIu64"\n", (uint64_t)start_op[i+1].msrdata, (uint64_t)stop_op[i+1].msrdata, (uint64_t)stop_op[i+1].msrdata - (uint64_t)start_op[i+1].msrdata );
   }
 }
 
-void calc_msr_freq( int threads, double time, struct msr_batch_op start_op[], struct msr_batch_op stop_op[], struct thread_msr_freq answer[] ) {
+void calc_msr_freq( int threads, struct msr_batch_op start_op[], struct msr_batch_op stop_op[], struct thread_msr_freq answer[] ) {
   int i;
   for ( i = 0; i < threads * 2; i+=2 ) {
-    answer[i/2].mperf_freq = ( (uint64_t) stop_op[i].msrdata - (uint64_t) start_op[i].msrdata ) / time / 1E9;
-    answer[i/2].aperf_freq = ( (uint64_t) stop_op[i+1].msrdata - (uint64_t) start_op[i+1].msrdata ) / time / 1E9;
+    answer[i/2].mperf_delta = ( (uint64_t) stop_op[i].msrdata - (uint64_t) start_op[i].msrdata );
+    answer[i/2].aperf_delta = ( (uint64_t) stop_op[i+1].msrdata - (uint64_t) start_op[i+1].msrdata );
+    answer[i/2].calc_freq = PRINTED_FREQ * ( answer[i/2].aperf_delta / answer[i/2].mperf_delta );
   }
 }
 
@@ -249,14 +270,27 @@ void calc_msr_freq( int threads, double time, struct msr_batch_op start_op[], st
 //}
 
 
-void print_thread_freq( int threads, struct thread_msr_freq total[], struct thread_msr_freq begin[], struct thread_msr_freq end[] ) {
+void print_thread_freq( int threads, struct thread_msr_freq freq[] ) {
   int i;
   for ( i = 0; i < threads; i++ ) {
-    printf( "thread %2d  %5s   mperf freq: %.4lf  aperf freq: %.4lf\n", i, "total", total[i].mperf_freq, total[i].aperf_freq );
-    printf( "           %5s   mperf freq: %.4lf  aperf freq: %.4lf\n", "begin", begin[i].mperf_freq, begin[i].aperf_freq );
-    printf( "           %5s   mperf freq: %.4lf  aperf freq: %.4lf\n", "end", end[i].mperf_freq, end[i].aperf_freq );
+    printf( "thread %2d   mperf delta: %.0lf  aperf delta: %.0lf  freq: %.4lf\n", i, freq[i].mperf_delta, freq[i].aperf_delta, freq[i].calc_freq);
   }
 }
+
+void calc_times( int threads, struct thread_msr_freq freq[] ) {
+  int i;
+  for( i = 0; i < threads; i++ ) {
+    freq[i].mperf_time = freq[i].mperf_delta / PRINTED_FREQ / 1.0E9;
+    freq[i].aperf_time = freq[i].aperf_delta / freq[i].calc_freq / 1.0E9;
+  }
+}
+
+void print_thread_times( int threads, struct thread_msr_freq freq[] ) {
+  int i;
+  for( i = 0; i < threads; i++ ) {
+    printf( "thread %2d   mperf time: %.6lf  aperf time: %.6lf\n", i, freq[i].mperf_time, freq[i].aperf_time );
+  }
+} 
 
 void initializeGrid( double p[N][N] ) {
 	int i, j;
@@ -297,7 +331,7 @@ int check_delta( double new[N][N], double old[N][N] ) {
 }
 
 int main( int argc, char *argv[] )  {
-  int num_threads, t, step;
+  int num_threads, t, step, fd;
 
   double elapsed_time, begin_time, end_time;
   
@@ -311,7 +345,9 @@ int main( int argc, char *argv[] )  {
   batch.numops = num_threads * 2;
   batch.ops = start_op;
 
-  read_msrs( num_threads, &batch, &msr_read_start );
+  fd = open( "/dev/cpu/msr_batch", O_RDWR );
+
+  read_msrs( num_threads, fd, &batch );
 
   step = ceil( N / ( double ) num_threads );
 
@@ -322,7 +358,7 @@ int main( int argc, char *argv[] )  {
     assert( ! pthread_barrier_init( &barrier[t], NULL, num_threads ) );
   }
 
-  batch.ops = after_init_op;
+  //batch.ops = after_init_op;
   for( t = 0; t < num_threads; t++ ) {
     thread_args[ t ].t = t;
     thread_args[ t ].start = t * step;
@@ -330,9 +366,9 @@ int main( int argc, char *argv[] )  {
     //thread_args[ t ].thread_start_time = 0;
     //thread_args[ t ].calc_start_time = ( double * ) malloc( sizeof( double ) * 200 );
     //thread_args[ t ].calc_stop_time = ( double * ) malloc( sizeof( double ) * 200 );
-    thread_args[ t ].batch = &batch;
-    thread_args[ t ].msr_read_time = &after_init_time;
-    thread_args[ t ].num_threads = num_threads;
+    //thread_args[ t ].batch = &batch;
+    //thread_args[ t ].msr_read_time = &after_init_time;
+    //thread_args[ t ].num_threads = num_threads;
     assert( ! pthread_create( &threads[ t ], NULL, thread_loop, (void*)&thread_args[t] ) );
   }
 
@@ -340,25 +376,29 @@ int main( int argc, char *argv[] )  {
     pthread_join( threads[ t ], NULL );
   }
 
+  batch.ops = stop_op;
+  read_msrs( num_threads, fd, &batch );
+
   for( t = 0; t < NUM_BARRIERS; t++ ) {
     assert( ! pthread_barrier_destroy( &barrier[ t ] ) );
   }
 
-  batch.ops = stop_op;
-  read_msrs( num_threads, &batch, &msr_read_stop );
+  //elapsed_time = ( msr_read_stop.tv_sec - msr_read_start.tv_sec ) + ( msr_read_stop.tv_usec - msr_read_start.tv_usec) / 1000000.0;
+  //begin_time = ( after_init_time.tv_sec - msr_read_start.tv_sec ) + ( after_init_time.tv_usec - msr_read_start.tv_usec) / 1000000.0;
+  //end_time = ( msr_read_stop.tv_sec - after_init_time.tv_sec ) + ( msr_read_stop.tv_usec - after_init_time.tv_usec) / 1000000.0;
 
-  elapsed_time = ( msr_read_stop.tv_sec - msr_read_start.tv_sec ) + ( msr_read_stop.tv_usec - msr_read_start.tv_usec) / 1000000.0;
-  begin_time = ( after_init_time.tv_sec - msr_read_start.tv_sec ) + ( after_init_time.tv_usec - msr_read_start.tv_usec) / 1000000.0;
-  end_time = ( msr_read_stop.tv_sec - after_init_time.tv_sec ) + ( msr_read_stop.tv_usec - after_init_time.tv_usec) / 1000000.0;
-
-  calc_msr_freq( num_threads, elapsed_time, start_op, stop_op, freq_total );
-  calc_msr_freq( num_threads, begin_time, start_op, after_init_op, freq_begin );
-  calc_msr_freq( num_threads, end_time, after_init_op, stop_op, freq_end );
+  //calc_msr_freq( num_threads, elapsed_time, start_op, stop_op, freq_total );
+  //calc_msr_freq( num_threads, begin_time, start_op, after_init_op, freq_begin );
+  //calc_msr_freq( num_threads, end_time, after_init_op, stop_op, freq_end );
+  calc_msr_freq( num_threads, start_op, stop_op, freq_total );
 
   if ( PRINT_FREQ ) {
     printf( "\n" );
     //print_thread_freq( num_threads, freq );
-    print_thread_freq( num_threads, freq_total, freq_begin, freq_end );
+    print_thread_freq( num_threads, freq_total );
+    printf( "\n" );
+    calc_times( num_threads, freq_total );
+    print_thread_times( num_threads, freq_total );
   }
 
   if (DEBUG) {
@@ -384,13 +424,15 @@ int main( int argc, char *argv[] )  {
 
   if (PRINT_MSRS) {
     printf("\n");
-    print_msrs( num_threads, start_op, stop_op, elapsed_time );
-    printf( "Elapsed time: %.4lf\n", elapsed_time );
-    printf( "Begin time: %.4lf\n", begin_time );
-    printf( "End time: %.4lf\n", end_time );
+    print_msrs( num_threads, start_op, stop_op );
+    //printf( "Elapsed time: %.4lf\n", elapsed_time );
+    //printf( "Begin time: %.4lf\n", begin_time );
+    //printf( "End time: %.4lf\n", end_time );
   }
   //readMatrixFromFile( "correct", correct );
   //checkAnswer( N, b, correct, 0);
+
+  close( fd );
   pthread_exit(NULL);
 
 }
