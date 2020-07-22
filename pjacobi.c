@@ -247,14 +247,21 @@ void read_perf_status( int threads, int fd, struct msr_batch_array *batch ) {
 void write_msrs( int threads, int fd, struct msr_batch_array *batch ) {
   int i, rc;
 
-  for (i = 0; i < threads; i++ ) {
+  for (i = 0; i < threads * 2; i+=2 ) {
     // perf_ctl
-    batch->ops[i].cpu = i;
+    batch->ops[i].cpu = i/2;
     batch->ops[i].isrdmsr = 0;
     batch->ops[i].err = 0;
     batch->ops[i].msr = 0x199;
-    batch->ops[i].msrdata = 0x100000000 | 3072 ; // change this
-    batch->ops[i].wmask = 0x000000010000FFFF; // and this
+    batch->ops[i].msrdata = 5888 ; // change this
+    batch->ops[i].wmask = 0x000000000000ff00; // and this
+
+    batch->ops[i+1].cpu = i/2;
+    batch->ops[i+1].isrdmsr = 1;
+    batch->ops[i+1].err = 0;
+    batch->ops[i+1].msr = 0x199;
+    batch->ops[i+1].msrdata = 0 ; // change this
+    batch->ops[i+1].wmask = 0; // and this
   }
 
   //gettimeofday( read_time, NULL );
@@ -360,7 +367,7 @@ int main( int argc, char *argv[] )  {
   num_threads = atoi( argv[ NUM_THREADS_INDEX ] );
 
   struct msr_batch_array batch;
-  struct msr_batch_op start_op[ num_threads * 2 ], stop_op[ num_threads * 2 ], read_perf_status_op[ num_threads ];
+  struct msr_batch_op start_op[ num_threads * 2 ], stop_op[ num_threads * 2 ], read_perf_status_op[ num_threads ],  set_perf_ctl_op[ num_threads * 2 ] ;
   struct thread_msr_freq freq_total[ num_threads ];
 
   batch.numops = num_threads * 2;
@@ -369,10 +376,9 @@ int main( int argc, char *argv[] )  {
   fd = open( "/dev/cpu/msr_batch", O_RDWR );
 
   // Write/Read perf status
-  batch.numops = num_threads;
-  batch.ops = read_perf_status_op;
+  batch.numops = num_threads * 2;
+  batch.ops = set_perf_ctl_op;
   write_msrs( num_threads, fd, &batch );
-  read_perf_status( num_threads, fd, &batch );
 
   // Read mperf/aperf
   batch.numops = num_threads * 2;
@@ -443,6 +449,7 @@ int main( int argc, char *argv[] )  {
     printf( "\n" );
     for( t = 0; t < num_threads; t++ ) {
       printf( "thread %2d   perf_status: %" PRIu64 "\n", t, (0x000000000000FFFF & (uint64_t)read_perf_status_op[t].msrdata)/256);
+      printf( "            perf_ctl: %" PRIu64 "\n", (0xFFFF & (uint64_t)set_perf_ctl_op[2*t+1].msrdata)/256);
     }
   }
 
