@@ -134,6 +134,20 @@ void *thread_loop(void *threadnum) {
   int stop = args->stop;
 
   int count = 0;
+
+  int rc;
+  cpu_set_t cpuset;
+  pthread_t thread;
+
+  thread = pthread_self();
+  CPU_ZERO( &cpuset );
+  CPU_SET( t, &cpuset );
+  rc = pthread_setaffinity_np( thread, sizeof( cpu_set_t ), &cpuset );
+  if ( rc ) {
+    printf( "I'm thread %2d and we have a problem\n", t);
+    pthread_exit( NULL );
+  }
+
   
   //gettimeofday( &thread_start, NULL );
   //args->thread_start_time = thread_start.tv_sec + thread_start.tv_usec / 1000000.0;
@@ -244,7 +258,7 @@ void read_perf_status( int threads, int fd, struct msr_batch_array *batch ) {
   assert( rc != -1 );
 }  
 
-void write_msrs( int threads, int fd, struct msr_batch_array *batch ) {
+void write_pert_ctl_msrs( int threads, int fd, int write_value, struct msr_batch_array *batch ) {
   int i, rc;
 
   for (i = 0; i < threads * 2; i+=2 ) {
@@ -253,7 +267,7 @@ void write_msrs( int threads, int fd, struct msr_batch_array *batch ) {
     batch->ops[i].isrdmsr = 0;
     batch->ops[i].err = 0;
     batch->ops[i].msr = 0x199;
-    batch->ops[i].msrdata = 5888 ; // change this
+    batch->ops[i].msrdata = (__u64) write_value ; // change this
     batch->ops[i].wmask = 0x000000000000ff00; // and this
 
     batch->ops[i+1].cpu = i/2;
@@ -378,7 +392,7 @@ int main( int argc, char *argv[] )  {
   // Write/Read perf status
   batch.numops = num_threads * 2;
   batch.ops = set_perf_ctl_op;
-  write_msrs( num_threads, fd, &batch );
+  write_pert_ctl_msrs( num_threads, fd, 5888 &batch );
 
   // Read mperf/aperf
   batch.numops = num_threads * 2;
@@ -489,3 +503,4 @@ int main( int argc, char *argv[] )  {
 
 }
 	
+// end
